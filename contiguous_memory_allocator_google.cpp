@@ -145,7 +145,7 @@ public:
             return address_offset;
         }
 
-        delete  block;
+        free(block);
         return -1;
     }
 
@@ -189,7 +189,7 @@ int main(){
     off = allocator.Submit(r1);
     std::cout << off << std::endl;
 
-    
+    free(pool1);
 
     return 0;
 }
