@@ -1,5 +1,7 @@
 interactive platform : https://proelecttro.github.io/memory_allocator/
 
+[![Memory Allocator Animation](assets/memory_allocator_5s.gif)](https://proelecttro.github.io/memory_allocator/)
+
 run allocator : 
 ```
 clang++ -std=c++17 \
