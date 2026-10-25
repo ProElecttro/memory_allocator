@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Memory Lab · Contiguous Allocator</title>
+<style>
+  :root {
+    --bg: #080b14;
+    --panel: rgba(18, 24, 40, .88);
+    --panel-2: #11182a;
+    --line: rgba(151, 169, 211, .16);
+    --text: #edf2ff;
+    --muted: #9aa8c7;
+    --dim: #687797;
+    --cyan: #65e6f2;
+    --blue: #7798ff;
+    --green: #63e6a6;
+    --orange: #ffbd69;
+    --pink: #ff7ca8;
+    --red: #ff7272;
+    --shadow: 0 24px 70px rgba(0,0,0,.3);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text); background:
+      radial-gradient(900px 550px at 8% -8%, rgba(63, 92, 190, .22), transparent 65%),
+      radial-gradient(750px 450px at 100% 4%, rgba(30, 184, 190, .12), transparent 60%),
+      var(--bg);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh;
+  }
+  button, input, select { font: inherit; }
+  button { cursor: pointer; }
+  .app { max-width: 1440px; margin: 0 auto; padding: 30px 26px 54px; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:28px; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .logo { width:44px; height:44px; display:grid; place-items:center; border-radius:14px; color:#07111d;
+    background: linear-gradient(135deg, var(--cyan), var(--blue)); box-shadow:0 8px 30px rgba(101,230,242,.18); }
+  .logo svg { width:25px; height:25px; }
+  .eyebrow { color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:.18em; text-transform:uppercase; }
+  h1 { margin:3px 0 0; font-size:clamp(22px,3vw,31px); letter-spacing:-.04em; }
+  .top-actions { display:flex; align-items:center; gap:10px; }
+  .status-pill { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:12px; background:rgba(255,255,255,.025); }
+  .pulse { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 12px var(--green); }
+  .btn { border:1px solid var(--line); background:#1a2238; color:var(--text); border-radius:11px; padding:10px 14px; font-weight:700; font-size:12px; transition:.18s transform,.18s border-color,.18s background; }
+  .btn:hover { transform:translateY(-1px); border-color:rgba(101,230,242,.55); }
+  .btn.primary { background:linear-gradient(135deg,#61dfe9,#7d9cff); color:#08111d; border:0; }
+  .btn.ghost { background:transparent; }
+  .btn.danger { color:#ffb2c1; background:rgba(255,124,168,.08); border-color:rgba(255,124,168,.25); }
+  .hero { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:20px; }
+  .hero h2 { font-size:clamp(24px,3.5vw,40px); line-height:1.06; letter-spacing:-.055em; margin:0; max-width:720px; }
+  .hero h2 span { color:var(--cyan); }
+  .hero p { color:var(--muted); max-width:670px; line-height:1.65; margin:13px 0 0; font-size:14px; }
+  .hero-note { max-width:235px; padding:14px 16px; border:1px solid rgba(101,230,242,.22); border-radius:14px; background:rgba(101,230,242,.055); color:#b7eaf0; font-size:12px; line-height:1.55; }
+  .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:13px; margin:24px 0; }
+  .metric, .panel { background:linear-gradient(145deg,rgba(22,29,48,.94),rgba(13,18,32,.94)); border:1px solid var(--line); box-shadow:var(--shadow); border-radius:18px; }
+  .metric { padding:17px 18px; min-width:0; }
+  .metric-top { display:flex; justify-content:space-between; align-items:center; color:var(--muted); font-size:12px; }
+  .metric-icon { width:29px;height:29px;border-radius:9px;display:grid;place-items:center;background:rgba(119,152,255,.12);color:var(--blue);font-size:14px; }
+  .metric-value { font-size:29px; font-weight:800; letter-spacing:-.045em; margin-top:10px; }
+  .metric-sub { color:var(--dim); font-size:11px; margin-top:4px; }
+  .layout { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(310px,.85fr); gap:16px; align-items:start; }
+  .left-stack,.right-stack { display:grid; gap:16px; min-width:0; }
+  .panel { padding:20px; min-width:0; }
+  .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:18px; }
+  .panel h3 { font-size:15px; margin:0; letter-spacing:-.02em; }
+  .sub { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  .tag { border:1px solid var(--line); border-radius:7px; padding:5px 8px; color:var(--muted); font-size:10px; white-space:nowrap; }
+  .memory-wrap { background:#090e1b; border:1px solid rgba(151,169,211,.13); border-radius:14px; padding:14px; }
+  .address-row { display:flex; justify-content:space-between; color:var(--dim); font:10px ui-monospace,SFMono-Regular,Menlo,monospace; margin-bottom:9px; }
+  .memory-map { display:flex; height:92px; gap:3px; overflow:hidden; border-radius:8px; background:#141b2c; }
+  .segment { position:relative; min-width:2px; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; padding:8px 7px; border:1px solid rgba(255,255,255,.12); transition:width .3s ease, filter .2s; animation:pop .25s ease; }
+  .segment.free { background:linear-gradient(135deg,rgba(99,230,166,.18),rgba(99,230,166,.07)); border-color:rgba(99,230,166,.3); color:#a6f4cc; }
+  .segment.used { background:linear-gradient(135deg,rgba(119,152,255,.34),rgba(76,101,184,.16)); border-color:rgba(119,152,255,.42); color:#dce5ff; cursor:pointer; }
+  .segment.used:hover { filter:brightness(1.22); }
+  .segment .seg-name { font-size:11px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .segment .seg-size { font:10px ui-monospace,SFMono-Regular,Menlo,monospace; opacity:.85; white-space:nowrap; }
+  .segment .seg-range { font:9px ui-monospace,SFMono-Regular,Menlo,monospace; opacity:.72; white-space:nowrap; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; color:var(--muted); font-size:11px; }
+  .legend span { display:flex; align-items:center; gap:7px; }
+  .swatch { width:8px;height:8px;border-radius:3px; }
+  .memory-foot { display:flex; justify-content:space-between; gap:12px; margin-top:15px; color:var(--muted); font-size:11px; }
+  .memory-foot strong { color:var(--text); }
+  .controls-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+  .field { display:flex; flex-direction:column; gap:7px; }
+  .field label { color:var(--muted); font-size:11px; font-weight:700; }
+  .input, select { width:100%; background:#0a1020; border:1px solid rgba(151,169,211,.22); border-radius:10px; color:var(--text); padding:11px 12px; outline:none; }
+  .input:focus, select:focus { border-color:var(--cyan); box-shadow:0 0 0 3px rgba(101,230,242,.08); }
+  .field-help { color:var(--dim); font-size:10px; line-height:1.4; }
+  .control-actions { display:flex; gap:9px; margin-top:15px; flex-wrap:wrap; }
+  .control-actions .btn { flex:1; min-width:120px; }
+  .inline-alert { display:none; margin-top:13px; padding:10px 12px; border-radius:10px; font-size:12px; line-height:1.5; }
+  .inline-alert.show { display:block; }
+  .inline-alert.ok { color:#a6f4cc; background:rgba(99,230,166,.08); border:1px solid rgba(99,230,166,.2); }
+  .inline-alert.error { color:#ffb1b1; background:rgba(255,114,114,.08); border:1px solid rgba(255,114,114,.2); }
+  .list-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .list-head .count { font:11px ui-monospace,monospace; color:var(--muted); }
+  .free-list { display:flex; align-items:stretch; gap:8px; overflow-x:auto; padding:4px 2px 10px; }
+  .free-node { min-width:100px; position:relative; padding:12px 11px; border:1px solid rgba(99,230,166,.23); border-radius:11px; background:rgba(99,230,166,.055); }
+  .free-node:not(:last-child)::after { content:'→'; position:absolute; right:-9px; top:50%; transform:translate(50%,-50%); color:var(--green); z-index:2; font-weight:900; }
+  .node-top { color:var(--green); font-size:10px; font-weight:800; }
+  .node-size { font-size:18px; font-weight:800; margin-top:6px; }
+  .node-offset { color:var(--muted); font:10px ui-monospace,monospace; margin-top:4px; }
+  .null-node { min-width:54px; display:grid; place-items:center; border:1px dashed rgba(151,169,211,.25); border-radius:11px; color:var(--dim); font:11px ui-monospace,monospace; }
+  .alloc-list { display:grid; gap:8px; }
+  .alloc-row { display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; padding:11px 12px; background:rgba(255,255,255,.025); border:1px solid var(--line); border-radius:11px; }
+  .alloc-name { font-size:12px; font-weight:800; }
+  .alloc-meta { color:var(--muted); font:10px ui-monospace,monospace; margin-top:4px; }
+  .alloc-right { display:flex; align-items:center; gap:9px; }
+  .alloc-size { color:#c9d5ff; font:11px ui-monospace,monospace; }
+  .mini-btn { width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,124,168,.25);background:rgba(255,124,168,.08);color:#ff9dbb;font-weight:900; }
+  .empty { padding:18px 12px; text-align:center; color:var(--dim); border:1px dashed var(--line); border-radius:11px; font-size:12px; }
+  .log { display:grid; gap:0; max-height:290px; overflow:auto; }
+  .log-entry { display:grid; grid-template-columns:65px 1fr; gap:10px; padding:11px 0; border-bottom:1px solid rgba(151,169,211,.1); }
+  .log-entry:last-child { border-bottom:0; }
+  .log-time { color:var(--dim); font:10px ui-monospace,monospace; padding-top:2px; }
+  .log-message { font-size:11px; line-height:1.5; color:#cbd5ee; }
+  .log-message strong { color:var(--text); }
+  .log-type { display:inline-block; border-radius:5px; padding:3px 5px; margin-right:5px; font-size:9px; font-weight:900; letter-spacing:.06em; }
+  .log-type.alloc { color:#b9c9ff;background:rgba(119,152,255,.13); }
+  .log-type.free { color:#a6f4cc;background:rgba(99,230,166,.11); }
+  .log-type.merge { color:#ffd59d;background:rgba(255,189,105,.12); }
+  .log-type.sys { color:#a8eaf1;background:rgba(101,230,242,.1); }
+  .algorithm { display:grid; gap:10px; }
+  .algo-step { display:flex; gap:10px; align-items:flex-start; }
+  .step-num { width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;border-radius:8px;background:rgba(101,230,242,.1);color:var(--cyan);font-size:11px;font-weight:900; }
+  .algo-step strong { display:block;font-size:11px;margin:1px 0 4px; }
+  .algo-step p { margin:0;color:var(--muted);font-size:11px;line-height:1.5; }
+  .bottom-note { color:var(--dim); font-size:10px; line-height:1.6; margin-top:16px; }
+  .toast { position:fixed; bottom:22px; left:50%; transform:translate(-50%,20px); opacity:0; pointer-events:none; padding:12px 16px; border-radius:12px; background:#eafcff;color:#08111d;font-size:12px;font-weight:800; box-shadow:0 15px 45px rgba(0,0,0,.35); transition:.25s; z-index:5; }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+  .kbd { border:1px solid var(--line);border-radius:5px;padding:2px 5px;font:10px ui-monospace,monospace;color:var(--muted); }
+  @keyframes pop { from { opacity:.45; transform:scaleY(.93); } to { opacity:1; transform:scaleY(1); } }
+  @media (max-width:1000px) { .layout { grid-template-columns:1fr; } .right-stack { grid-template-columns:1fr 1fr; } .hero-note { display:none; } }
+  @media (max-width:650px) { .app{padding:20px 13px 36px}.topbar{align-items:flex-start}.top-actions .status-pill{display:none}.hero{display:block}.metrics{grid-template-columns:repeat(2,1fr);gap:9px}.metric{padding:14px}.metric-value{font-size:24px}.panel{padding:15px}.controls-grid{grid-template-columns:1fr}.right-stack{grid-template-columns:1fr}.memory-map{height:78px}.segment{padding:6px 4px}.segment .seg-name{font-size:9px}.segment .seg-size{font-size:9px}.top-actions .btn{padding:9px 10px} }
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after{animation:none!important;transition:none!important} }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 8h4M7 12h10M7 16h6M15 7h2"/></svg>
+      </div>
+      <div><div class="eyebrow">Systems playground</div><h1>Memory Lab <span style="color:var(--dim);font-weight:500">/ allocator</span></h1></div>
+    </div>
+    <div class="top-actions">
+      <div class="status-pill"><span class="pulse"></span> Simulation running locally</div>
+      <button class="btn ghost" id="resetBtn" title="Reset the entire memory pool">↺ Reset</button>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div>
+      <h2>See memory allocation.<br><span>Byte by byte.</span></h2>
+      <p>An interactive visual model of your contiguous memory allocator: first-fit allocation, address offsets, a sorted free-block list, deallocation, and adjacent-block coalescing. Make allocations, create fragmentation, then watch defragmentation bring free space back together.</p>
+    </div>
+    <div class="hero-note"><strong>Core idea</strong><br>Free memory is not one big number. It is a set of address ranges. A request succeeds only if one contiguous free range is large enough.</div>
+  </section>
+
+  <section class="metrics" aria-label="Memory statistics">
+    <div class="metric"><div class="metric-top">Total pool <span class="metric-icon">▦</span></div><div class="metric-value" id="totalMetric">1,000</div><div class="metric-sub">addressable units</div></div>
+    <div class="metric"><div class="metric-top">Allocated <span class="metric-icon" style="color:var(--blue)">◧</span></div><div class="metric-value" id="usedMetric">0</div><div class="metric-sub" id="usedSub">0% of total capacity</div></div>
+    <div class="metric"><div class="metric-top">Free capacity <span class="metric-icon" style="color:var(--green)">↗</span></div><div class="metric-value" id="freeMetric">1,000</div><div class="metric-sub" id="freeSub">Available across all blocks</div></div>
+    <div class="metric"><div class="metric-top">Largest free block <span class="metric-icon" style="color:var(--orange)">⌁</span></div><div class="metric-value" id="largestMetric">1,000</div><div class="metric-sub" id="fragSub">External fragmentation: 0%</div></div>
+  </section>
+
+  <main class="layout">
+    <div class="left-stack">
+      <section class="panel">
+        <div class="panel-head"><div><h3>Physical memory map</h3><div class="sub">Click an allocated segment to release it. Widths are proportional to block size.</div></div><span class="tag" id="poolTag">POOL · 1,000 UNITS</span></div>
+        <div class="memory-wrap">
+          <div class="address-row"><span>LOW ADDRESS · 0</span><span id="endAddress">HIGH ADDRESS · 999</span></div>
+          <div class="memory-map" id="memoryMap" role="img" aria-label="Visual representation of the memory pool"></div>
+          <div class="legend"><span><i class="swatch" style="background:var(--blue)"></i>Allocated block</span><span><i class="swatch" style="background:var(--green)"></i>Free block</span><span><i class="swatch" style="background:var(--orange)"></i>Merge candidate</span></div>
+          <div class="memory-foot"><span>Memory in use <strong id="usedFoot">0 / 1,000</strong></span><span>Pool utilization <strong id="utilFoot">0%</strong></span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><h3>Run an operation</h3><div class="sub">Try allocating, freeing, and reusing address ranges.</div></div><span class="tag">FIRST-FIT</span></div>
+        <div class="controls-grid">
+          <div class="field"><label for="requestSize">Request size</label><input class="input" id="requestSize" type="number" min="1" step="1" value="124" placeholder="e.g. 128"><div class="field-help">Number of contiguous units to allocate or free.</div></div>
+          <div class="field"><label for="allocationName">Allocation label</label><input class="input" id="allocationName" maxlength="22" value="buffer_A" placeholder="e.g. packet_buffer"><div class="field-help">A readable label for the allocation.</div></div>
+        </div>
+        <div class="control-actions">
+          <button class="btn primary" id="allocateBtn">＋ Allocate memory</button>
+          <button class="btn" id="defragBtn">⤢ Coalesce free blocks</button>
+          <button class="btn ghost" id="scenarioBtn">▶ Play demo scenario</button>
+        </div>
+        <div class="inline-alert" id="alertBox" role="status"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><h3>Free list · doubly linked list</h3><div class="sub">Blocks are kept in ascending address order. Each node represents a free contiguous range.</div></div><span class="tag" id="freeCountTag">0 NODES</span></div>
+        <div class="list-head"><span class="sub" style="margin:0">freeHead</span><span class="count" id="freeHeadLabel">→ NULL</span></div>
+        <div class="free-list" id="freeList"></div>
+        <div class="bottom-note">Each free node stores <span class="kbd">address_offset</span>, <span class="kbd">size</span>, <span class="kbd">prev</span>, and <span class="kbd">next</span>. Coalescing combines adjacent ranges only when their addresses touch.</div>
+      </section>
+    </div>
+
+    <div class="right-stack">
+      <section class="panel">
+        <div class="panel-head"><div><h3>Live allocations</h3><div class="sub">Release any block with the trash button.</div></div><span class="tag" id="allocCountTag">0 ACTIVE</span></div>
+        <div class="alloc-list" id="allocList"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h3>Operation timeline</h3><div class="sub">A trace of allocator decisions.</div></div><button class="btn ghost" id="clearLogBtn" style="padding:6px 9px">Clear</button></div>
+        <div class="log" id="logList" aria-live="polite"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h3>Allocator logic</h3><div class="sub">What happens under the hood.</div></div><span class="tag">MODEL</span></div>
+        <div class="algorithm">
+          <div class="algo-step"><div class="step-num">1</div><div><strong>First-fit search</strong><p>Scan free blocks from the head until a block large enough for the request is found.</p></div></div>
+          <div class="algo-step"><div class="step-num">2</div><div><strong>Split the free range</strong><p>Return its starting offset, then shrink the free block from the front. Exact fits remove the node.</p></div></div>
+          <div class="algo-step"><div class="step-num">3</div><div><strong>Insert on deallocation</strong><p>Insert the released range by address so the free list stays sorted.</p></div></div>
+          <div class="algo-step"><div class="step-num">4</div><div><strong>Coalesce neighbours</strong><p>If one free block ends exactly where the next begins, merge them into a larger block.</p></div></div>
+        </div>
+        <div class="bottom-note">This visualizer models the intended allocator behavior. It is a simulation, not a compiler or execution of the C++ source. Production code should validate frees and allocation metadata carefully.</div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const POOL_SIZE = 1000;
+  let freeBlocks = [{ offset: 0, size: POOL_SIZE }];
+  let allocations = [];
+  let nextId = 1;
+  let logs = [];
+  let toastTimer;
+
+  const fmt = n => Number(n).toLocaleString('en-US');
+  const pct = n => `${(n * 100).toFixed(1).replace('.0','')}%`;
+  const totalUsed = () => allocations.reduce((sum, a) => sum + a.size, 0);
+  const totalFree = () => freeBlocks.reduce((sum, b) => sum + b.size, 0);
+  const largestFree = () => freeBlocks.reduce((m, b) => Math.max(m, b.size), 0);
+
+  function toast(message) {
+    const t = $('toast');
+    t.textContent = message;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+
+  function addLog(type, message) {
+    const now = new Date();
+    logs.unshift({ type, message, time: now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) });
+    logs = logs.slice(0, 60);
+    renderLog();
+  }
+
+  function showAlert(message, kind='ok') {
+    const box = $('alertBox');
+    box.className = `inline-alert show ${kind}`;
+    box.textContent = message;
+  }
+
+  function clearAlert() {
+    $('alertBox').className = 'inline-alert';
+    $('alertBox').textContent = '';
+  }
+
+  function allocate(size, label) {
+    if (!Number.isInteger(size) || size <= 0) {
+      showAlert('Enter a positive whole-number request size.', 'error');
+      return false;
+    }
+    if (size > POOL_SIZE) {
+      showAlert(`Request rejected: ${fmt(size)} units exceeds the entire ${fmt(POOL_SIZE)}-unit pool.`, 'error');
+      addLog('sys', `Rejected request for <strong>${fmt(size)} units</strong>: larger than the pool.`);
+      return false;
+    }
+    const index = freeBlocks.findIndex(block => block.size >= size);
+    if (index === -1) {
+      const largest = largestFree();
+      const msg = `Allocation failed: ${fmt(size)} contiguous units requested, but the largest free block is ${fmt(largest)}. Total free capacity is ${fmt(totalFree())}.`;
+      showAlert(msg, 'error');
+      addLog('sys', `<strong>Allocation failed.</strong> Need ${fmt(size)} contiguous units; largest block = ${fmt(largest)}.`);
+      render();
+      return false;
+    }
+    const block = freeBlocks[index];
+    const offset = block.offset;
+    if (block.size === size) freeBlocks.splice(index, 1);
+    else { block.offset += size; block.size -= size; }
+
+    const name = (label || '').trim() || `allocation_${nextId}`;
+    const allocation = { id: nextId++, name, offset, size };
+    allocations.push(allocation);
+    allocations.sort((a,b) => a.offset - b.offset);
+    addLog('alloc', `<strong>${escapeHtml(name)}</strong> allocated ${fmt(size)} units at offset <strong>${fmt(offset)}</strong>.`);
+    showAlert(`Allocated ${fmt(size)} units at offset ${fmt(offset)}.`, 'ok');
+    render();
+    return true;
+  }
+
+  function deallocate(id) {
+    const idx = allocations.findIndex(a => a.id === id);
+    if (idx < 0) return;
+    const [a] = allocations.splice(idx, 1);
+    freeBlocks.push({ offset: a.offset, size: a.size });
+    freeBlocks.sort((x,y) => x.offset - y.offset);
+    addLog('free', `<strong>${escapeHtml(a.name)}</strong> released ${fmt(a.size)} units at offset ${fmt(a.offset)}.`);
+    const merged = coalesce(false);
+    if (merged > 0) addLog('merge', `Automatic coalescing merged <strong>${merged}</strong> adjacent free-block pair${merged===1?'':'s'}.`);
+    showAlert(`Released ${fmt(a.size)} units from ${escapeHtml(a.name)}${merged ? ` and merged ${merged} adjacent block pair${merged===1?'':'s'}` : ''}.`, 'ok');
+    render();
+  }
+
+  function coalesce(logIt=true) {
+    freeBlocks.sort((a,b) => a.offset - b.offset);
+    let merged = 0;
+    for (let i=0; i<freeBlocks.length-1;) {
+      const current = freeBlocks[i], next = freeBlocks[i+1];
+      if (current.offset + current.size === next.offset) {
+        current.size += next.size;
+        freeBlocks.splice(i+1,1);
+        merged++;
+      } else i++;
+    }
+    if (logIt) {
+      if (merged) {
+        addLog('merge', `Coalescing merged <strong>${merged}</strong> adjacent free-block pair${merged===1?'':'s'}.`);
+        showAlert(`Coalescing complete: merged ${merged} adjacent pair${merged===1?'':'s'}.`, 'ok');
+      } else {
+        addLog('sys', 'Coalescing checked all free blocks. <strong>No adjacent ranges</strong> could be merged.');
+        showAlert('No adjacent free blocks to merge. The free list is already coalesced.', 'ok');
+      }
+      render();
+    }
+    return merged;
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
+  function renderMetrics() {
+    const used = totalUsed(), free = totalFree(), largest = largestFree();
+    $('totalMetric').textContent = fmt(POOL_SIZE);
+    $('usedMetric').textContent = fmt(used);
+    $('usedSub').textContent = `${pct(used / POOL_SIZE)} of total capacity`;
+    $('freeMetric').textContent = fmt(free);
+    $('freeSub').textContent = `${freeBlocks.length} free block${freeBlocks.length===1?'':'s'} available`;
+    $('largestMetric').textContent = fmt(largest);
+    const frag = free === 0 ? 0 : (free - largest) / free;
+    $('fragSub').textContent = `External fragmentation: ${pct(frag)}`;
+    $('poolTag').textContent = `POOL · ${fmt(POOL_SIZE)} UNITS`;
+    $('endAddress').textContent = `HIGH ADDRESS · ${fmt(POOL_SIZE-1)}`;
+    $('usedFoot').textContent = `${fmt(used)} / ${fmt(POOL_SIZE)}`;
+    $('utilFoot').textContent = pct(used / POOL_SIZE);
+    $('freeCountTag').textContent = `${freeBlocks.length} NODE${freeBlocks.length===1?'':'S'}`;
+    $('freeHeadLabel').textContent = freeBlocks.length ? `→ [${freeBlocks[0].offset}]` : '→ NULL';
+    $('allocCountTag').textContent = `${allocations.length} ACTIVE`;
+  }
+
+  function renderMemoryMap() {
+    const map = $('memoryMap');
+    map.innerHTML = '';
+    const all = [
+      ...allocations.map(a => ({...a, kind:'used'})),
+      ...freeBlocks.map(b => ({...b, kind:'free'}))
+    ].sort((a,b) => a.offset - b.offset);
+    all.forEach(block => {
+      const el = document.createElement('div');
+      el.className = `segment ${block.kind}`;
+      el.style.width = `${block.size / POOL_SIZE * 100}%`;
+      el.style.flex = `0 0 ${block.size / POOL_SIZE * 100}%`;
+      const end = block.offset + block.size - 1;
+      if (block.size >= 45) {
+        el.innerHTML = block.kind === 'used'
+          ? `<span class="seg-name">${escapeHtml(block.name)}</span><span class="seg-size">${fmt(block.size)} units</span><span class="seg-range">${fmt(block.offset)}–${fmt(end)}</span>`
+          : `<span class="seg-name">FREE</span><span class="seg-size">${fmt(block.size)} units</span><span class="seg-range">${fmt(block.offset)}–${fmt(end)}</span>`;
+      } else if (block.size >= 15) {
+        el.innerHTML = `<span class="seg-name">${block.kind==='used' ? escapeHtml(block.name) : 'FREE'}</span><span class="seg-range">${fmt(block.offset)}–${fmt(end)}</span>`;
+      } else {
+        el.title = `${block.kind==='used' ? block.name : 'Free'} · ${block.size} units · offsets ${block.offset}-${end}`;
+        el.setAttribute('aria-label', el.title);
+      }
+      if (block.kind === 'used') {
+        el.title = `${block.name}: ${block.size} units at offset ${block.offset}. Click to deallocate.`;
+        el.setAttribute('role','button');
+        el.setAttribute('tabindex','0');
+        el.setAttribute('aria-label',el.title);
+        el.addEventListener('click', () => deallocate(block.id));
+        el.addEventListener('keydown', e => { if (e.key==='Enter' || e.key===' ') { e.preventDefault(); deallocate(block.id); } });
+      }
+      map.appendChild(el);
+    });
+  }
+
+  function renderFreeList() {
+    const list = $('freeList');
+    list.innerHTML = '';
+    if (!freeBlocks.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.style.minWidth = '100%';
+      empty.textContent = 'freeHead → NULL · No free memory remains.';
+      list.appendChild(empty);
+      return;
+    }
+    freeBlocks.forEach((b, i) => {
+      const node = document.createElement('div');
+      node.className = 'free-node';
+      node.innerHTML = `<div class="node-top">NODE ${String(i).padStart(2,'0')}</div><div class="node-size">${fmt(b.size)} <span style="font-size:10px;font-weight:500;color:var(--muted)">units</span></div><div class="node-offset">offset: ${fmt(b.offset)}</div><div class="node-offset">end: ${fmt(b.offset+b.size-1)}</div>`;
+      list.appendChild(node);
+    });
+    const nullNode = document.createElement('div');
+    nullNode.className = 'null-node';
+    nullNode.textContent = 'NULL';
+    list.appendChild(nullNode);
+  }
+
+  function renderAllocations() {
+    const list = $('allocList');
+    list.innerHTML = '';
+    if (!allocations.length) {
+      list.innerHTML = '<div class="empty">No active allocations yet.<br>Allocate a block to see it appear here.</div>';
+      return;
+    }
+    [...allocations].sort((a,b) => a.offset-b.offset).forEach(a => {
+      const row = document.createElement('div');
+      row.className = 'alloc-row';
+      row.innerHTML = `<div><div class="alloc-name">${escapeHtml(a.name)}</div><div class="alloc-meta">offset ${fmt(a.offset)} · ${fmt(a.offset+a.size-1)} inclusive</div></div><div class="alloc-right"><span class="alloc-size">${fmt(a.size)} u</span><button class="mini-btn" aria-label="Deallocate ${escapeHtml(a.name)}" title="Deallocate this block">×</button></div>`;
+      row.querySelector('button').addEventListener('click', () => deallocate(a.id));
+      list.appendChild(row);
+    });
+  }
+
+  function renderLog() {
+    const list = $('logList');
+    if (!logs.length) {
+      list.innerHTML = '<div class="empty">No operations yet. Your allocator trace will appear here.</div>';
+      return;
+    }
+    list.innerHTML = logs.map(item => {
+      const labels = {alloc:'ALLOC', free:'FREE', merge:'MERGE', sys:'SYSTEM'};
+      return `<div class="log-entry"><div class="log-time">${item.time}</div><div class="log-message"><span class="log-type ${item.type}">${labels[item.type]}</span>${item.message}</div></div>`;
+    }).join('');
+  }
+
+  function render() {
+    renderMetrics();
+    renderMemoryMap();
+    renderFreeList();
+    renderAllocations();
+  }
+
+  function reset() {
+    freeBlocks = [{ offset:0, size:POOL_SIZE }];
+    allocations = [];
+    nextId = 1;
+    logs = [];
+    addLog('sys', `Memory pool initialized: <strong>${fmt(POOL_SIZE)} units</strong> at offsets 0–${POOL_SIZE-1}.`);
+    clearAlert();
+    render();
+    toast('Memory pool reset');
+  }
+
+  let demoTimer = null;
+  function stopDemo() {
+    if (demoTimer) clearInterval(demoTimer);
+    demoTimer = null;
+    $('scenarioBtn').textContent = '▶ Play demo scenario';
+  }
+  function playDemo() {
+    if (demoTimer) { stopDemo(); return; }
+    reset();
+    const steps = [
+      () => allocate(124, 'buffer_A'),
+      () => allocate(421, 'buffer_B'),
+      () => allocate(263, 'buffer_C'),
+      () => allocate(25, 'tiny_D'),
+      () => deallocate(allocations.find(a=>a.name==='buffer_B')?.id),
+      () => deallocate(allocations.find(a=>a.name==='tiny_D')?.id),
+      () => allocate(300, 'reuse_E'),
+      () => deallocate(allocations.find(a=>a.name==='buffer_A')?.id),
+      () => deallocate(allocations.find(a=>a.name==='buffer_C')?.id)
+    ];
+    let i = 0;
+    $('scenarioBtn').textContent = 'Ⅱ Pause demo';
+    demoTimer = setInterval(() => {
+      if (i >= steps.length) { stopDemo(); toast('Demo scenario complete'); return; }
+      steps[i++]();
+    }, 900);
+  }
+
+  $('allocateBtn').addEventListener('click', () => {
+    const size = Number($('requestSize').value);
+    const label = $('allocationName').value;
+    if (allocate(size, label)) {
+      $('allocationName').value = `buffer_${String.fromCharCode(65 + ((nextId-1) % 26))}`;
+    }
+  });
+  $('requestSize').addEventListener('keydown', e => { if (e.key === 'Enter') $('allocateBtn').click(); });
+  $('allocationName').addEventListener('keydown', e => { if (e.key === 'Enter') $('allocateBtn').click(); });
+  $('defragBtn').addEventListener('click', () => coalesce(true));
+  $('resetBtn').addEventListener('click', () => { stopDemo(); reset(); });
+  $('scenarioBtn').addEventListener('click', playDemo);
+  $('clearLogBtn').addEventListener('click', () => { logs=[]; renderLog(); });
+
+  addLog('sys', `Memory pool initialized: <strong>${fmt(POOL_SIZE)} units</strong> at offsets 0–${POOL_SIZE-1}.`);
+  render();
+})();
+</script>
+</body>
+</html>
