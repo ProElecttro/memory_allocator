@@ -1,0 +1,5 @@
+allocator_tests
+allocator_tests_asan
+*.dSYM/
+mem
+memory
